@@ -188,9 +188,45 @@ class WorkoutProvider extends ChangeNotifier {
   }
 
   // ── BodyInfo ──────────────────────────────────────────────
+
+  /// 最新データ（日付降順の先頭）
+  BodyInfo? get latestBodyInfo =>
+      _bodyInfoList.isNotEmpty ? _bodyInfoList.first : null;
+
+  /// 日付降順の全履歴
+  List<BodyInfo> get bodyInfoHistory {
+    final sorted = List<BodyInfo>.from(_bodyInfoList);
+    sorted.sort((a, b) => b.date.compareTo(a.date));
+    return sorted;
+  }
+
+  /// 体重の時系列データ（日付昇順）
+  List<BodyInfo> get weightHistory {
+    final list = _bodyInfoList.where((b) => b.weight != null).toList();
+    list.sort((a, b) => a.date.compareTo(b.date));
+    return list;
+  }
+
+  /// 体脂肪率の時系列データ（日付昇順）
+  List<BodyInfo> get bodyFatHistory {
+    final list = _bodyInfoList.where((b) => b.bodyFat != null).toList();
+    list.sort((a, b) => a.date.compareTo(b.date));
+    return list;
+  }
+
+  /// BMIの時系列データ（日付昇順）
+  List<BodyInfo> get bmiHistory {
+    final list = _bodyInfoList.where((b) => b.bmi != null).toList();
+    list.sort((a, b) => a.date.compareTo(b.date));
+    return list;
+  }
+
+  /// 手動入力で1件追加（同日データは上書き or 追記）
   Future<void> addBodyInfo(BodyInfo info) async {
     try {
       _bodyInfoList.insert(0, info);
+      // 日付降順で並び替えて保存
+      _bodyInfoList.sort((a, b) => b.date.compareTo(a.date));
       await _storage.saveBodyInfo(_bodyInfoList);
       notifyListeners();
     } catch (e) {
@@ -198,8 +234,44 @@ class WorkoutProvider extends ChangeNotifier {
     }
   }
 
-  BodyInfo? get latestBodyInfo =>
-      _bodyInfoList.isNotEmpty ? _bodyInfoList.first : null;
+  /// HealthKit XMLから一括インポート（重複日付はスキップ）
+  Future<int> importBodyInfoBatch(List<BodyInfo> items) async {
+    try {
+      int added = 0;
+      for (final item in items) {
+        // 同日 + 同ソースが既存なら上書き、なければ追加
+        final existIdx = _bodyInfoList.indexWhere((b) =>
+            b.source == item.source &&
+            b.date.year  == item.date.year &&
+            b.date.month == item.date.month &&
+            b.date.day   == item.date.day);
+        if (existIdx >= 0) {
+          _bodyInfoList[existIdx] = item;
+        } else {
+          _bodyInfoList.add(item);
+          added++;
+        }
+      }
+      _bodyInfoList.sort((a, b) => b.date.compareTo(a.date));
+      await _storage.saveBodyInfo(_bodyInfoList);
+      notifyListeners();
+      return added;
+    } catch (e) {
+      if (kDebugMode) debugPrint('importBodyInfoBatch error: $e');
+      return 0;
+    }
+  }
+
+  /// 指定IDの身体データを削除
+  Future<void> deleteBodyInfo(String id) async {
+    try {
+      _bodyInfoList.removeWhere((b) => b.id == id);
+      await _storage.saveBodyInfo(_bodyInfoList);
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) debugPrint('deleteBodyInfo error: $e');
+    }
+  }
 
   // ── Personal Records ──────────────────────────────────────
   void _updatePersonalRecords(Exercise exercise) {
@@ -236,9 +308,59 @@ class WorkoutProvider extends ChangeNotifier {
     }
   }
 
-  // ── 種目定義 ──────────────────────────────────────────────
+  // ── 種目定義 CRUD ─────────────────────────────────────────
+
   List<ExerciseDefinition> getExercisesByBodyPart(String bodyPart) {
-    return _exercises.where((e) => e.bodyPart == bodyPart).toList();
+    final list = _exercises.where((e) => e.bodyPart == bodyPart).toList();
+    // 標準種目 → ユーザー追加種目 の順に並べる
+    list.sort((a, b) {
+      if (a.isDefault == b.isDefault) return 0;
+      return a.isDefault ? -1 : 1;
+    });
+    return list;
+  }
+
+  /// 同名種目が存在するか確認（大文字小文字・全半角を正規化して比較）
+  bool exerciseNameExists(String name, {String? excludeId}) {
+    final normalized = name.trim();
+    return _exercises.any((e) =>
+        e.id != excludeId &&
+        e.name.trim() == normalized);
+  }
+
+  /// ユーザー種目の追加
+  Future<void> addExerciseDefinition(ExerciseDefinition def) async {
+    try {
+      _exercises.add(def);
+      await _storage.saveExercises(_exercises);
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) debugPrint('addExerciseDefinition error: $e');
+    }
+  }
+
+  /// ユーザー種目の編集（isDefault=false のみ許可）
+  Future<void> updateExerciseDefinition(ExerciseDefinition updated) async {
+    try {
+      final idx = _exercises.indexWhere((e) => e.id == updated.id);
+      if (idx < 0) return;
+      _exercises[idx] = updated;
+      await _storage.saveExercises(_exercises);
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) debugPrint('updateExerciseDefinition error: $e');
+    }
+  }
+
+  /// ユーザー種目の削除（isDefault=false のみ許可）
+  Future<void> deleteExerciseDefinition(String id) async {
+    try {
+      _exercises.removeWhere((e) => e.id == id && !e.isDefault);
+      await _storage.saveExercises(_exercises);
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) debugPrint('deleteExerciseDefinition error: $e');
+    }
   }
 
   // ── Helper ────────────────────────────────────────────────

@@ -1,0 +1,94 @@
+workflows:
+  ios-release:
+    name: iOS App Store Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Codemagic  # App Store ConnectのAPI Keyの名前（Codemagicの設定で登録した名前）
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.workouttracker.log
+      vars:
+        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
+        XCODE_SCHEME: "Runner"
+        APP_STORE_CONNECT_ISSUER_ID: Encrypted(...)     # CodemagicのEnvironment variablesに設定
+        APP_STORE_CONNECT_KEY_IDENTIFIER: Encrypted(...) # 同上
+        APP_STORE_CONNECT_PRIVATE_KEY: Encrypted(...)    # 同上
+      flutter: 3.35.4
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+
+    scripts:
+      - name: Set up code signing settings on Xcode project
+        script: |
+          xcode-project use-profiles
+
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+
+      - name: Flutter analyze
+        script: |
+          flutter analyze
+
+      - name: Build iOS IPA
+        script: |
+          flutter build ipa \
+            --release \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false   # 最初はTestFlightのみ。本番提出はtrueに変更
+
+  ios-testflight:
+    name: iOS TestFlight Beta
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Codemagic
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.workouttracker.log
+      flutter: 3.35.4
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+
+      - name: Build iOS IPA
+        script: |
+          flutter build ipa \
+            --release \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
