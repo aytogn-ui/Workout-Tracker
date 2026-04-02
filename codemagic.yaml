@@ -10,8 +10,6 @@ workflows:
         bundle_identifier: com.workouttracker.log
       vars:
         BUNDLE_ID: "com.workouttracker.log"
-        XCODE_SCHEME: "Runner"
-        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
       flutter: 3.35.4
       xcode: latest
       cocoapods: default
@@ -36,27 +34,14 @@ workflows:
       - name: Set up code signing
         script: |
           xcode-project use-profiles
-          # 証明書の確認
-          security find-identity -v -p codesigning
-          # プロファイルの確認
-          ls ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null | head -5
 
       - name: Build iOS IPA
         script: |
-          # CODE_SIGN_IDENTITY と PROVISIONING_PROFILE_SPECIFIER を明示
-          flutter build ipa \
-            --release \
-            --dart-define=flutter.inspector.structuredErrors=false \
-            --no-codesign || true
-
-          # xcarchive から手動でIPA作成
-          xcodebuild -exportArchive \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            -exportOptionsPlist ios/ExportOptions.plist \
-            -exportPath build/ios/ipa \
-            -allowProvisioningUpdates 2>&1 | tail -20
-
-          ls -la build/ios/ipa/ 2>/dev/null || echo "IPAディレクトリなし"
+          flutter build ipa --release \
+            --dart-define=flutter.inspector.structuredErrors=false
+          echo "--- IPA検索 ---"
+          find . -name "*.ipa" 2>/dev/null
+          ls -la build/ios/ipa/ 2>/dev/null || echo "build/ios/ipa/ なし"
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -100,8 +85,7 @@ workflows:
 
       - name: Build iOS IPA
         script: |
-          flutter build ipa \
-            --release \
+          flutter build ipa --release \
             --dart-define=flutter.inspector.structuredErrors=false
 
     artifacts:
