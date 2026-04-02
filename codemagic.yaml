@@ -39,20 +39,11 @@ workflows:
         script: |
           flutter build ipa \
             --release \
-            --dart-define=flutter.inspector.structuredErrors=false \
-            --export-options-plist=$CM_BUILD_DIR/ios/ExportOptions.plist || \
-          flutter build ipa \
-            --release \
+            --export-options-plist=ios/ExportOptions.plist \
             --dart-define=flutter.inspector.structuredErrors=false
-
-      - name: Find IPA
-        script: |
-          find $CM_BUILD_DIR -name "*.ipa" 2>/dev/null
-          find . -name "*.ipa" 2>/dev/null
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
@@ -95,11 +86,11 @@ workflows:
         script: |
           flutter build ipa \
             --release \
+            --export-options-plist=ios/ExportOptions.plist \
             --dart-define=flutter.inspector.structuredErrors=false
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
