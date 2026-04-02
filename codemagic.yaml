@@ -39,14 +39,19 @@ workflows:
         script: |
           flutter build ipa \
             --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --export-options-plist=$CM_BUILD_DIR/ios/ExportOptions.plist || \
+          flutter build ipa \
+            --release \
             --dart-define=flutter.inspector.structuredErrors=false
-          # IPAファイルの場所を確認してコピー
-          find . -name "*.ipa" 2>/dev/null || true
-          ls -la build/ios/archive/ 2>/dev/null || true
+
+      - name: Find IPA
+        script: |
+          find $CM_BUILD_DIR -name "*.ipa" 2>/dev/null
+          find . -name "*.ipa" 2>/dev/null
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/Runner.xcarchive/Products/Applications/*.app
       - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
 
