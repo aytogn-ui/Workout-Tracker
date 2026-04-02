@@ -36,18 +36,27 @@ workflows:
       - name: Set up code signing
         script: |
           xcode-project use-profiles
+          # 証明書の確認
+          security find-identity -v -p codesigning
+          # プロファイルの確認
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null | head -5
 
       - name: Build iOS IPA
         script: |
-          # CM_PROVISIONING_PROFILE はCodemagicが自動設定する環境変数
-          # xcode-project use-profiles により証明書・プロファイルはキーチェーンに登録済み
+          # CODE_SIGN_IDENTITY と PROVISIONING_PROFILE_SPECIFIER を明示
           flutter build ipa \
             --release \
-            --dart-define=flutter.inspector.structuredErrors=false
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --no-codesign || true
 
-          # 生成されたIPAを確認
+          # xcarchive から手動でIPA作成
+          xcodebuild -exportArchive \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath build/ios/ipa \
+            -allowProvisioningUpdates 2>&1 | tail -20
+
           ls -la build/ios/ipa/ 2>/dev/null || echo "IPAディレクトリなし"
-          find . -name "*.ipa" 2>/dev/null | head -5
 
     artifacts:
       - build/ios/ipa/*.ipa
