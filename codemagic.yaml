@@ -33,14 +33,23 @@ workflows:
 
       - name: Set up code signing
         script: |
-          xcode-project use-profiles
+          xcode-project use-profiles --verbose
+
+      - name: Show signing info
+        script: |
+          echo "=== Provisioning Profiles ==="
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "No profiles found"
+          echo "=== Keychain certs ==="
+          security find-identity -v -p codesigning 2>/dev/null || echo "No certs found"
 
       - name: Build iOS IPA
         script: |
-          flutter build ipa --release \
-            --dart-define=flutter.inspector.structuredErrors=false
+          flutter build ipa \
+            --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --export-method=app-store
           echo "--- IPA検索 ---"
-          find . -name "*.ipa" 2>/dev/null
+          find . -name "*.ipa" 2>/dev/null || echo "IPA not found"
           ls -la build/ios/ipa/ 2>/dev/null || echo "build/ios/ipa/ なし"
 
     artifacts:
@@ -81,12 +90,14 @@ workflows:
 
       - name: Set up code signing
         script: |
-          xcode-project use-profiles
+          xcode-project use-profiles --verbose
 
       - name: Build iOS IPA
         script: |
-          flutter build ipa --release \
-            --dart-define=flutter.inspector.structuredErrors=false
+          flutter build ipa \
+            --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --export-method=app-store
 
     artifacts:
       - build/ios/ipa/*.ipa
