@@ -11,11 +11,8 @@
     <key>uploadSymbols</key>
     <true/>
     <key>signingStyle</key>
-    <string>manual</string>
-    <key>provisioningProfiles</key>
-    <dict>
-        <key>com.workouttracker.log</key>
-        <string>WorkoutTracker_AppStore</string>
-    </dict>
+    <string>automatic</string>
+    <key>destination</key>
+    <string>export</string>
 </dict>
 </plist>

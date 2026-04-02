@@ -10,6 +10,7 @@ workflows:
         bundle_identifier: com.workouttracker.log
       vars:
         BUNDLE_ID: "com.workouttracker.log"
+        XCODE_SCHEME: "Runner"
       flutter: 3.35.4
       xcode: latest
       cocoapods: default
@@ -34,6 +35,8 @@ workflows:
       - name: Set up code signing
         script: |
           xcode-project use-profiles
+          # 署名設定の確認
+          security find-identity -v -p codesigning | head -5 || true
 
       - name: Build iOS IPA
         script: |
