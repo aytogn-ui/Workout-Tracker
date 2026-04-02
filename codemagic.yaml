@@ -40,9 +40,14 @@ workflows:
           flutter build ipa \
             --release \
             --dart-define=flutter.inspector.structuredErrors=false
+          # IPAファイルの場所を確認してコピー
+          find . -name "*.ipa" 2>/dev/null || true
+          ls -la build/ios/archive/ 2>/dev/null || true
 
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/archive/Runner.xcarchive/Products/Applications/*.app
+      - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
@@ -89,6 +94,7 @@ workflows:
 
     artifacts:
       - build/ios/ipa/*.ipa
+      - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
