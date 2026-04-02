@@ -11,6 +11,7 @@ workflows:
       vars:
         BUNDLE_ID: "com.workouttracker.log"
         XCODE_SCHEME: "Runner"
+        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
       flutter: 3.35.4
       xcode: latest
       cocoapods: default
@@ -35,15 +36,18 @@ workflows:
       - name: Set up code signing
         script: |
           xcode-project use-profiles
-          # 署名設定の確認
-          security find-identity -v -p codesigning | head -5 || true
 
       - name: Build iOS IPA
         script: |
+          # CM_PROVISIONING_PROFILE はCodemagicが自動設定する環境変数
+          # xcode-project use-profiles により証明書・プロファイルはキーチェーンに登録済み
           flutter build ipa \
             --release \
-            --export-options-plist=ios/ExportOptions.plist \
             --dart-define=flutter.inspector.structuredErrors=false
+
+          # 生成されたIPAを確認
+          ls -la build/ios/ipa/ 2>/dev/null || echo "IPAディレクトリなし"
+          find . -name "*.ipa" 2>/dev/null | head -5
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -89,7 +93,6 @@ workflows:
         script: |
           flutter build ipa \
             --release \
-            --export-options-plist=ios/ExportOptions.plist \
             --dart-define=flutter.inspector.structuredErrors=false
 
     artifacts:
