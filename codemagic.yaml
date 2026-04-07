@@ -38,78 +38,37 @@ workflows:
 
       - name: Show signing info
         script: |
-          echo "=== Provisioning Profiles installed ==="
-          ls ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null && \
-            for f in ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision; do
-              echo "--- $f ---"
-              security cms -D -i "$f" 2>/dev/null | grep -E "<key>Name</key>|<key>UUID</key>|<key>TeamIdentifier</key>" | head -6
-            done || echo "No profiles found"
+          echo "=== Installed Provisioning Profiles ==="
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "No profiles found"
+          for f in ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision; do
+            [ -f "$f" ] || continue
+            echo "--- Profile: $f ---"
+            security cms -D -i "$f" 2>/dev/null | grep -A1 -E "<key>Name</key>|<key>UUID</key>|<key>TeamIdentifier</key>|<key>ApplicationIdentifierPrefix</key>" | head -20
+          done
           echo ""
-          echo "=== Code signing identities ==="
-          security find-identity -v -p codesigning 2>/dev/null || echo "No certs found"
-
-      - name: Build Flutter (no codesign)
-        script: |
-          flutter build ios --release --no-codesign \
-            --dart-define=flutter.inspector.structuredErrors=false
-
-      - name: Archive and Export IPA
-        script: |
-          # アーカイブ作成
-          xcodebuild \
+          echo "=== Code Signing Identities ==="
+          security find-identity -v -p codesigning 2>/dev/null || echo "No identities found"
+          echo ""
+          echo "=== Xcode project signing settings ==="
+          xcodebuild -showBuildSettings \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
-            -configuration Release \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            DEVELOPMENT_TEAM=$TEAM_ID \
-            CODE_SIGN_STYLE=Manual \
-            "CODE_SIGN_IDENTITY=Apple Distribution" \
-            "PROVISIONING_PROFILE_SPECIFIER=WorkoutTracker_AppStore" \
-            archive \
-            | xcpretty
+            -configuration Release 2>/dev/null | grep -E "CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM" || echo "Could not read build settings"
 
-          echo "=== Archive確認 ==="
-          ls -la build/ios/archive/ || echo "Archive not found"
-
-          # ExportOptions作成
-          cat > /tmp/ExportOptions.plist << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>teamID</key>
-            <string>${TEAM_ID}</string>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <true/>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.workouttracker.log</key>
-              <string>WorkoutTracker_AppStore</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
-
-          # IPA出力
-          xcodebuild \
-            -exportArchive \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            -exportPath build/ios/ipa \
-            | xcpretty
-
-          echo "=== IPA確認 ==="
-          find build/ios/ipa -name "*.ipa" 2>/dev/null || echo "IPA not found"
+      - name: Build iOS IPA
+        script: |
+          # flutter build ipa uses xcodebuild internally with proper signing
+          flutter build ipa \
+            --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --export-method=app-store \
+            --verbose 2>&1 | tail -100
+          echo "--- IPA search ---"
+          find . -name "*.ipa" 2>/dev/null || echo "No IPA found"
+          ls -la build/ios/ipa/ 2>/dev/null || echo "build/ios/ipa/ not found"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/Runner.xcarchive/**
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
@@ -149,55 +108,12 @@ workflows:
         script: |
           xcode-project use-profiles --verbose
 
-      - name: Build Flutter (no codesign)
+      - name: Build iOS IPA
         script: |
-          flutter build ios --release --no-codesign \
-            --dart-define=flutter.inspector.structuredErrors=false
-
-      - name: Archive and Export IPA
-        script: |
-          xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            DEVELOPMENT_TEAM=$TEAM_ID \
-            CODE_SIGN_STYLE=Manual \
-            "CODE_SIGN_IDENTITY=Apple Distribution" \
-            "PROVISIONING_PROFILE_SPECIFIER=WorkoutTracker_AppStore" \
-            archive \
-            | xcpretty
-
-          cat > /tmp/ExportOptions.plist << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>teamID</key>
-            <string>${TEAM_ID}</string>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <true/>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.workouttracker.log</key>
-              <string>WorkoutTracker_AppStore</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
-
-          xcodebuild \
-            -exportArchive \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            -exportPath build/ios/ipa \
-            | xcpretty
+          flutter build ipa \
+            --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --export-method=app-store
 
     artifacts:
       - build/ios/ipa/*.ipa
