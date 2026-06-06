@@ -17,8 +17,6 @@ workflows:
         script: flutter packages pub get
 
       - name: Set up code signing
-        # use-profiles が Runner の pbxproj に署名設定を書き込む
-        # Podfile の post_install で Pods への伝播はブロック済み
         script: xcode-project use-profiles
 
       - name: Verify signing setup
@@ -34,7 +32,6 @@ workflows:
             exit 1
           fi
 
-          # Python 3.12対応: ファイル経由でplistを解析
           security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
 
           PROFILE_UUID=$(python3 -c "
@@ -59,8 +56,16 @@ workflows:
           echo "UUID: $PROFILE_UUID"
           echo "Name: $PROFILE_NAME"
 
+          # 証明書のSHA-1フィンガープリントを取得（"Apple Distribution"で完全一致）
+          CERT_SHA1=$(security find-identity -v -p codesigning | \
+            grep "Apple Distribution" | \
+            head -1 | \
+            awk '{print $2}')
+          echo "Certificate SHA1: $CERT_SHA1"
+
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+          echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
 
           echo "=== pbxproj signing settings ==="
           grep -E "CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM" \
@@ -75,15 +80,22 @@ workflows:
         script: |
           set -o pipefail
           echo "=== Profile UUID: $PROFILE_UUID ==="
+          echo "=== Cert SHA1:    $CERT_SHA1 ==="
 
           mkdir -p build/ios/archive
 
+          # CODE_SIGN_IDENTITY にSHA-1を使用することで確実に正しい証明書を参照
+          # PROVISIONING_PROFILE にUUIDを使用することでプロファイルを確実に参照
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -sdk iphoneos \
             -configuration Release \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="$CERT_SHA1" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
             archive \
             2>&1 | tee /tmp/xcodebuild_archive.log
 
@@ -101,23 +113,31 @@ workflows:
         script: |
           set -o pipefail
           echo "=== Exporting with UUID: $PROFILE_UUID ==="
+          echo "=== Cert SHA1: $CERT_SHA1 ==="
 
           if [ ! -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
             echo "ERROR: Archive not found!"
             exit 1
           fi
 
+          # ExportOptions.plistを動的生成
+          # signingCertificateにSHA-1を使用して証明書を確実に特定
           python3 -c "
           import plistlib, os
           with open('ios/ExportOptions.plist', 'rb') as f:
               d = plistlib.load(f)
           profile_uuid = os.environ.get('PROFILE_UUID', '')
+          cert_sha1 = os.environ.get('CERT_SHA1', '')
           print('UUID:', profile_uuid)
+          print('SHA1:', cert_sha1)
           if profile_uuid:
               d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
+          if cert_sha1:
+              d['signingCertificate'] = cert_sha1
           with open('/tmp/ExportOptions.plist', 'wb') as f:
               plistlib.dump(d, f)
           print('provisioningProfiles:', d.get('provisioningProfiles'))
+          print('signingCertificate:', d.get('signingCertificate'))
           "
 
           echo "=== ExportOptions.plist ==="
@@ -185,14 +205,10 @@ workflows:
               d = plistlib.load(f)
           print(d['UUID'])
           ")
-          PROFILE_NAME=$(python3 -c "
-          import plistlib
-          with open('/tmp/profile_decoded.plist', 'rb') as f:
-              d = plistlib.load(f)
-          print(d['Name'])
-          ")
+          CERT_SHA1=$(security find-identity -v -p codesigning | \
+            grep "Apple Distribution" | head -1 | awk '{print $2}')
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
-          echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+          echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
 
       - name: Build Flutter
         script: |
@@ -208,6 +224,10 @@ workflows:
             -sdk iphoneos \
             -configuration Release \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="$CERT_SHA1" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
             archive \
             2>&1 | tee /tmp/xcodebuild_archive.log
 
@@ -225,8 +245,11 @@ workflows:
           with open('ios/ExportOptions.plist', 'rb') as f:
               d = plistlib.load(f)
           profile_uuid = os.environ.get('PROFILE_UUID', '')
+          cert_sha1 = os.environ.get('CERT_SHA1', '')
           if profile_uuid:
               d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
+          if cert_sha1:
+              d['signingCertificate'] = cert_sha1
           with open('/tmp/ExportOptions.plist', 'wb') as f:
               plistlib.dump(d, f)
           "
