@@ -23,24 +23,51 @@ workflows:
         script: |
           flutter build ipa \
             --release \
-            --export-method=app-store
+            --export-options-plist=ios/ExportOptions.plist
           
-          echo "=== find ALL ipa files ==="
-          find /Users/builder -name "*.ipa" 2>/dev/null || echo "no ipa anywhere"
-          find . -name "*.ipa" 2>/dev/null || echo "no ipa in project"
-          
-          echo "=== build/ios/ contents ==="
-          ls -la build/ios/ 2>/dev/null || echo "build/ios/ not found"
-          ls -la build/ios/ipa/ 2>/dev/null || echo "build/ios/ipa/ not found"
-          ls -la build/ios/archive/ 2>/dev/null || echo "build/ios/archive/ not found"
-          
-          echo "=== flutter build ipa exit code ==="
-          echo "Done"
+          echo "=== IPA result ==="
+          find . -name "*.ipa" 2>/dev/null || echo "No IPA found"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/ipa/**/*.ipa
-      - "**/*.ipa"
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+        submit_to_app_store: false
+
+  ios-release:
+    name: iOS App Store Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.workouttracker.log
+      flutter: 3.35.4
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Get Flutter packages
+        script: flutter packages pub get
+
+      - name: Set up code signing
+        script: xcode-project use-profiles
+
+      - name: Build iOS IPA
+        script: |
+          flutter build ipa \
+            --release \
+            --export-options-plist=ios/ExportOptions.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
