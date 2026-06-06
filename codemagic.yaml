@@ -17,13 +17,11 @@ workflows:
         script: flutter packages pub get
 
       - name: Set up code signing
-        script: xcode-project use-profiles
-
-      - name: Verify signing setup
         script: |
           echo "=== Certificates in keychain ==="
           security find-identity -v -p codesigning
 
+          # プロビジョニングプロファイルを取得
           PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
           echo "Profile path: $PROFILE_PATH"
 
@@ -32,6 +30,7 @@ workflows:
             exit 1
           fi
 
+          # Python 3.12対応: ファイル経由でplistを解析
           security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
 
           PROFILE_UUID=$(python3 -c "
@@ -48,28 +47,50 @@ workflows:
           print(d['Name'])
           ")
 
+          # 証明書のSHA-1フィンガープリントを取得
+          CERT_SHA1=$(security find-identity -v -p codesigning | \
+            grep "Apple Distribution" | head -1 | awk '{print $2}')
+
           if [ -z "$PROFILE_UUID" ]; then
             echo "ERROR: Could not extract UUID!"
             exit 1
           fi
 
-          echo "UUID: $PROFILE_UUID"
-          echo "Name: $PROFILE_NAME"
+          echo "UUID:  $PROFILE_UUID"
+          echo "Name:  $PROFILE_NAME"
+          echo "SHA1:  $CERT_SHA1"
 
-          # 証明書のSHA-1フィンガープリントを取得（"Apple Distribution"で完全一致）
-          CERT_SHA1=$(security find-identity -v -p codesigning | \
-            grep "Apple Distribution" | \
-            head -1 | \
-            awk '{print $2}')
-          echo "Certificate SHA1: $CERT_SHA1"
-
+          # 環境変数を保存
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
           echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
 
-          echo "=== pbxproj signing settings ==="
-          grep -E "CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM" \
-            ios/Runner.xcodeproj/project.pbxproj | head -20 || true
+          # pbxprojのPROVISIONING_PROFILE_SPECIFIERをUUIDで上書き
+          # use-profilesを使わず直接書き換えることで名前検索エラーを回避
+          python3 -c "
+          import re, sys
+
+          with open('ios/Runner.xcodeproj/project.pbxproj', 'r') as f:
+              content = f.read()
+
+          uuid = '$PROFILE_UUID'
+
+          # PROVISIONING_PROFILE_SPECIFIER を UUID で置換
+          content = re.sub(
+              r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;',
+              f'PROVISIONING_PROFILE_SPECIFIER = \"{uuid}\";',
+              content
+          )
+
+          with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
+              f.write(content)
+
+          print('pbxproj updated with UUID:', uuid)
+          "
+
+          echo "=== Verify pbxproj ==="
+          grep -E "PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|CODE_SIGN_STYLE|DEVELOPMENT_TEAM" \
+            ios/Runner.xcodeproj/project.pbxproj | head -10
 
       - name: Build Flutter
         script: |
@@ -84,8 +105,6 @@ workflows:
 
           mkdir -p build/ios/archive
 
-          # CODE_SIGN_IDENTITY にSHA-1を使用することで確実に正しい証明書を参照
-          # PROVISIONING_PROFILE にUUIDを使用することでプロファイルを確実に参照
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -112,16 +131,13 @@ workflows:
       - name: Export IPA
         script: |
           set -o pipefail
-          echo "=== Exporting with UUID: $PROFILE_UUID ==="
-          echo "=== Cert SHA1: $CERT_SHA1 ==="
+          echo "=== Exporting with UUID: $PROFILE_UUID, SHA1: $CERT_SHA1 ==="
 
           if [ ! -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
             echo "ERROR: Archive not found!"
             exit 1
           fi
 
-          # ExportOptions.plistを動的生成
-          # signingCertificateにSHA-1を使用して証明書を確実に特定
           python3 -c "
           import plistlib, os
           with open('ios/ExportOptions.plist', 'rb') as f:
@@ -193,9 +209,6 @@ workflows:
         script: flutter packages pub get
 
       - name: Set up code signing
-        script: xcode-project use-profiles
-
-      - name: Verify signing setup
         script: |
           PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
           security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
@@ -209,6 +222,21 @@ workflows:
             grep "Apple Distribution" | head -1 | awk '{print $2}')
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
+
+          python3 -c "
+          import re
+          with open('ios/Runner.xcodeproj/project.pbxproj', 'r') as f:
+              content = f.read()
+          uuid = '$PROFILE_UUID'
+          content = re.sub(
+              r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;',
+              f'PROVISIONING_PROFILE_SPECIFIER = \"{uuid}\";',
+              content
+          )
+          with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
+              f.write(content)
+          print('pbxproj updated:', uuid)
+          "
 
       - name: Build Flutter
         script: |
