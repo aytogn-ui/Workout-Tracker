@@ -6,16 +6,18 @@
   <string>app-store-connect</string>
   <key>teamID</key>
   <string>Q7XPYDQ69X</string>
-  <key>uploadBitcode</key>
-  <false/>
-  <key>uploadSymbols</key>
-  <true/>
   <key>signingStyle</key>
   <string>manual</string>
+  <key>signingCertificate</key>
+  <string>Apple Distribution</string>
   <key>provisioningProfiles</key>
   <dict>
     <key>com.workouttracker.log</key>
     <string>WorkoutTracker_AppStore</string>
   </dict>
+  <key>uploadBitcode</key>
+  <false/>
+  <key>uploadSymbols</key>
+  <true/>
 </dict>
 </plist>
