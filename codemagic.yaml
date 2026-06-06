@@ -21,7 +21,6 @@ workflows:
           echo "=== Certificates in keychain ==="
           security find-identity -v -p codesigning
 
-          # プロビジョニングプロファイルを取得
           PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
           echo "Profile path: $PROFILE_PATH"
 
@@ -30,7 +29,6 @@ workflows:
             exit 1
           fi
 
-          # Python 3.12対応: ファイル経由でplistを解析
           security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
 
           PROFILE_UUID=$(python3 -c "
@@ -47,7 +45,15 @@ workflows:
           print(d['Name'])
           ")
 
-          # 証明書のSHA-1フィンガープリントを取得
+          # プロファイルのチームID（DEVELOPMENT_TEAMと一致させる）
+          PROFILE_TEAM_ID=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          teams = d.get('TeamIdentifier', [])
+          print(teams[0] if teams else '')
+          ")
+
           CERT_SHA1=$(security find-identity -v -p codesigning | \
             grep "Apple Distribution" | head -1 | awk '{print $2}')
 
@@ -56,37 +62,44 @@ workflows:
             exit 1
           fi
 
-          echo "UUID:  $PROFILE_UUID"
-          echo "Name:  $PROFILE_NAME"
-          echo "SHA1:  $CERT_SHA1"
+          echo "UUID:           $PROFILE_UUID"
+          echo "Name:           $PROFILE_NAME"
+          echo "Profile TeamID: $PROFILE_TEAM_ID"
+          echo "Cert SHA1:      $CERT_SHA1"
 
-          # 環境変数を保存
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+          echo "PROFILE_TEAM_ID=$PROFILE_TEAM_ID" >> $CM_ENV
           echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
 
-          # pbxprojのPROVISIONING_PROFILE_SPECIFIERをUUIDで上書き
-          # use-profilesを使わず直接書き換えることで名前検索エラーを回避
-          python3 -c "
-          import re, sys
+          # pbxprojをプロファイルの実際のチームIDとUUIDで更新
+          python3 << 'PYEOF'
+          import re, os
 
           with open('ios/Runner.xcodeproj/project.pbxproj', 'r') as f:
               content = f.read()
 
-          uuid = '$PROFILE_UUID'
+          uuid = os.environ['PROFILE_UUID']
+          team_id = os.environ['PROFILE_TEAM_ID']
 
-          # PROVISIONING_PROFILE_SPECIFIER を UUID で置換
+          # PROVISIONING_PROFILE_SPECIFIER をUUIDで置換
           content = re.sub(
               r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;',
-              f'PROVISIONING_PROFILE_SPECIFIER = \"{uuid}\";',
+              f'PROVISIONING_PROFILE_SPECIFIER = "{uuid}";',
+              content
+          )
+          # DEVELOPMENT_TEAM をプロファイルのチームIDで置換
+          content = re.sub(
+              r'DEVELOPMENT_TEAM = [^;]*;',
+              f'DEVELOPMENT_TEAM = {team_id};',
               content
           )
 
           with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
               f.write(content)
 
-          print('pbxproj updated with UUID:', uuid)
-          "
+          print(f'pbxproj updated: TeamID={team_id}, UUID={uuid}')
+          PYEOF
 
           echo "=== Verify pbxproj ==="
           grep -E "PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|CODE_SIGN_STYLE|DEVELOPMENT_TEAM" \
@@ -100,8 +113,9 @@ workflows:
       - name: Archive with xcodebuild
         script: |
           set -o pipefail
-          echo "=== Profile UUID: $PROFILE_UUID ==="
-          echo "=== Cert SHA1:    $CERT_SHA1 ==="
+          echo "=== Profile UUID:   $PROFILE_UUID ==="
+          echo "=== Profile TeamID: $PROFILE_TEAM_ID ==="
+          echo "=== Cert SHA1:      $CERT_SHA1 ==="
 
           mkdir -p build/ios/archive
 
@@ -111,7 +125,7 @@ workflows:
             -sdk iphoneos \
             -configuration Release \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
-            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            DEVELOPMENT_TEAM="$PROFILE_TEAM_ID" \
             CODE_SIGN_STYLE="Manual" \
             CODE_SIGN_IDENTITY="$CERT_SHA1" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
@@ -131,7 +145,7 @@ workflows:
       - name: Export IPA
         script: |
           set -o pipefail
-          echo "=== Exporting with UUID: $PROFILE_UUID, SHA1: $CERT_SHA1 ==="
+          echo "=== Exporting: UUID=$PROFILE_UUID, TeamID=$PROFILE_TEAM_ID ==="
 
           if [ ! -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
             echo "ERROR: Archive not found!"
@@ -144,16 +158,19 @@ workflows:
               d = plistlib.load(f)
           profile_uuid = os.environ.get('PROFILE_UUID', '')
           cert_sha1 = os.environ.get('CERT_SHA1', '')
+          team_id = os.environ.get('PROFILE_TEAM_ID', '')
           print('UUID:', profile_uuid)
           print('SHA1:', cert_sha1)
+          print('TeamID:', team_id)
           if profile_uuid:
               d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
           if cert_sha1:
               d['signingCertificate'] = cert_sha1
+          if team_id:
+              d['teamID'] = team_id
           with open('/tmp/ExportOptions.plist', 'wb') as f:
               plistlib.dump(d, f)
           print('provisioningProfiles:', d.get('provisioningProfiles'))
-          print('signingCertificate:', d.get('signingCertificate'))
           "
 
           echo "=== ExportOptions.plist ==="
@@ -218,25 +235,33 @@ workflows:
               d = plistlib.load(f)
           print(d['UUID'])
           ")
+          PROFILE_TEAM_ID=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          teams = d.get('TeamIdentifier', [])
+          print(teams[0] if teams else '')
+          ")
           CERT_SHA1=$(security find-identity -v -p codesigning | \
             grep "Apple Distribution" | head -1 | awk '{print $2}')
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          echo "PROFILE_TEAM_ID=$PROFILE_TEAM_ID" >> $CM_ENV
           echo "CERT_SHA1=$CERT_SHA1" >> $CM_ENV
 
-          python3 -c "
-          import re
+          python3 << 'PYEOF'
+          import re, os
           with open('ios/Runner.xcodeproj/project.pbxproj', 'r') as f:
               content = f.read()
-          uuid = '$PROFILE_UUID'
-          content = re.sub(
-              r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;',
-              f'PROVISIONING_PROFILE_SPECIFIER = \"{uuid}\";',
-              content
-          )
+          uuid = os.environ['PROFILE_UUID']
+          team_id = os.environ['PROFILE_TEAM_ID']
+          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;',
+              f'PROVISIONING_PROFILE_SPECIFIER = "{uuid}";', content)
+          content = re.sub(r'DEVELOPMENT_TEAM = [^;]*;',
+              f'DEVELOPMENT_TEAM = {team_id};', content)
           with open('ios/Runner.xcodeproj/project.pbxproj', 'w') as f:
               f.write(content)
-          print('pbxproj updated:', uuid)
-          "
+          print(f'pbxproj updated: TeamID={team_id}, UUID={uuid}')
+          PYEOF
 
       - name: Build Flutter
         script: |
@@ -252,7 +277,7 @@ workflows:
             -sdk iphoneos \
             -configuration Release \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
-            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            DEVELOPMENT_TEAM="$PROFILE_TEAM_ID" \
             CODE_SIGN_STYLE="Manual" \
             CODE_SIGN_IDENTITY="$CERT_SHA1" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
@@ -274,10 +299,13 @@ workflows:
               d = plistlib.load(f)
           profile_uuid = os.environ.get('PROFILE_UUID', '')
           cert_sha1 = os.environ.get('CERT_SHA1', '')
+          team_id = os.environ.get('PROFILE_TEAM_ID', '')
           if profile_uuid:
               d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
           if cert_sha1:
               d['signingCertificate'] = cert_sha1
+          if team_id:
+              d['teamID'] = team_id
           with open('/tmp/ExportOptions.plist', 'wb') as f:
               plistlib.dump(d, f)
           "
