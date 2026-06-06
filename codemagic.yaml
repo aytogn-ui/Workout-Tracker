@@ -21,12 +21,21 @@ workflows:
 
       - name: Build iOS IPA
         script: |
+          set -e
+          echo "=== Building IPA ==="
           flutter build ipa \
             --release \
-            --export-method=app-store
+            --export-method=app-store \
+            --verbose 2>&1 | grep -E "(error:|warning:|Built|FAILED|SUCCEEDED|exportArchive|provisioning|signing)" || true
+          
+          echo "=== Checking output ==="
+          find . -name "*.ipa" 2>/dev/null || echo "No IPA file found"
+          ls -la build/ios/ipa/ 2>/dev/null || echo "build/ios/ipa/ does not exist"
+          ls -la build/ios/archive/ 2>/dev/null || echo "build/ios/archive/ does not exist"
 
     artifacts:
       - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
 
     publishing:
       app_store_connect:
