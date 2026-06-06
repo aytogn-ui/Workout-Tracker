@@ -19,14 +19,103 @@ workflows:
       - name: Set up code signing
         script: xcode-project use-profiles
 
-      - name: Build iOS IPA
+      - name: Install certificates to keychain
         script: |
-          flutter build ipa \
-            --release \
-            --export-options-plist=ios/ExportOptions.plist
+          # Codemagicが設定した証明書・プロファイルを確認
+          echo "=== Certificates in keychain ==="
+          security find-identity -v -p codesigning
+
+          echo "=== Provisioning profiles ==="
+          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
+          echo "Profile: $PROFILE_PATH"
+
+          if [ -z "$PROFILE_PATH" ]; then
+            echo "ERROR: No provisioning profile found!"
+            exit 1
+          fi
+
+          # プロファイルのUUIDと名前を取得
+          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
+            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
+          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
+            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
+          
+          echo "UUID: $PROFILE_UUID"
+          echo "Name: $PROFILE_NAME"
+          
+          # 環境変数として保存
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+
+      - name: Build Flutter
+        script: |
+          flutter build ios --release --no-codesign \
+            --dart-define=flutter.inspector.structuredErrors=false
+
+      - name: Archive with xcodebuild
+        script: |
+          echo "Using profile UUID: $PROFILE_UUID"
+          
+          mkdir -p build/ios/archive
+          
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive | xcpretty
+          
+          echo "=== Archive result ==="
+          ls -la "$PWD/build/ios/archive/" || echo "Archive not found"
+
+      - name: Export IPA
+        script: |
+          echo "Exporting with UUID: $PROFILE_UUID"
+          
+          # ExportOptions.plistをUUIDで作成
+          cat > /tmp/ExportOptions.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>teamID</key>
+  <string>Q7XPYDQ69X</string>
+  <key>uploadBitcode</key>
+  <false/>
+  <key>uploadSymbols</key>
+  <true/>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.workouttracker.log</key>
+    <string>$PROFILE_UUID</string>
+  </dict>
+</dict>
+</plist>
+EOF
+          
+          cat /tmp/ExportOptions.plist
+          
+          mkdir -p build/ios/ipa
+          
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            -exportOptionsPlist /tmp/ExportOptions.plist \
+            -exportPath "$PWD/build/ios/ipa" \
+            | xcpretty
           
           echo "=== IPA result ==="
-          find . -name "*.ipa" 2>/dev/null || echo "No IPA found"
+          find "$PWD/build/ios/ipa" -name "*.ipa" || echo "No IPA found"
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -60,15 +149,67 @@ workflows:
       - name: Set up code signing
         script: xcode-project use-profiles
 
-      - name: Build iOS IPA
+      - name: Install certificates to keychain
         script: |
-          flutter build ipa \
-            --release \
-            --export-options-plist=ios/ExportOptions.plist
+          PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
+          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
+            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
+          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
+            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
+          echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
+
+      - name: Build Flutter
+        script: |
+          flutter build ios --release --no-codesign
+
+      - name: Archive with xcodebuild
+        script: |
+          mkdir -p build/ios/archive
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            DEVELOPMENT_TEAM="Q7XPYDQ69X" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive | xcpretty
+
+      - name: Export IPA
+        script: |
+          cat > /tmp/ExportOptions.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>teamID</key>
+  <string>Q7XPYDQ69X</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.workouttracker.log</key>
+    <string>$PROFILE_UUID</string>
+  </dict>
+</dict>
+</plist>
+EOF
+          mkdir -p build/ios/ipa
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            -exportOptionsPlist /tmp/ExportOptions.plist \
+            -exportPath "$PWD/build/ios/ipa" \
+            | xcpretty
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
 
     publishing:
       app_store_connect:
