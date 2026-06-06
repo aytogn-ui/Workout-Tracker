@@ -39,10 +39,10 @@ workflows:
             python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
           PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
             python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
-          
+
           echo "UUID: $PROFILE_UUID"
           echo "Name: $PROFILE_NAME"
-          
+
           # 環境変数として保存
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
@@ -55,9 +55,9 @@ workflows:
       - name: Archive with xcodebuild
         script: |
           echo "Using profile UUID: $PROFILE_UUID"
-          
+
           mkdir -p build/ios/archive
-          
+
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -70,50 +70,41 @@ workflows:
             PROVISIONING_PROFILE="$PROFILE_UUID" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             archive | xcpretty
-          
+
           echo "=== Archive result ==="
           ls -la "$PWD/build/ios/archive/" || echo "Archive not found"
 
       - name: Export IPA
         script: |
           echo "Exporting with UUID: $PROFILE_UUID"
-          
-          # ExportOptions.plistをUUIDで作成
-          cat > /tmp/ExportOptions.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store-connect</string>
-  <key>teamID</key>
-  <string>Q7XPYDQ69X</string>
-  <key>uploadBitcode</key>
-  <false/>
-  <key>uploadSymbols</key>
-  <true/>
-  <key>signingStyle</key>
-  <string>manual</string>
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>com.workouttracker.log</key>
-    <string>$PROFILE_UUID</string>
-  </dict>
-</dict>
-</plist>
-EOF
-          
+
+          # python3 plistlib でExportOptions.plistのUUIDを動的に更新
+          python3 -c "
+          import plistlib, os
+          plist_path = 'ios/ExportOptions.plist'
+          with open(plist_path, 'rb') as f:
+              d = plistlib.load(f)
+          profile_uuid = os.environ.get('PROFILE_UUID', '')
+          if profile_uuid:
+              d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
+          dest = '/tmp/ExportOptions.plist'
+          with open(dest, 'wb') as f:
+              plistlib.dump(d, f)
+          print('ExportOptions.plist written to:', dest)
+          print('provisioningProfiles:', d.get('provisioningProfiles'))
+          "
+
           cat /tmp/ExportOptions.plist
-          
+
           mkdir -p build/ios/ipa
-          
+
           xcodebuild \
             -exportArchive \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
             -exportOptionsPlist /tmp/ExportOptions.plist \
             -exportPath "$PWD/build/ios/ipa" \
             | xcpretty
-          
+
           echo "=== IPA result ==="
           find "$PWD/build/ios/ipa" -name "*.ipa" || echo "No IPA found"
 
@@ -181,25 +172,20 @@ EOF
 
       - name: Export IPA
         script: |
-          cat > /tmp/ExportOptions.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store-connect</string>
-  <key>teamID</key>
-  <string>Q7XPYDQ69X</string>
-  <key>signingStyle</key>
-  <string>manual</string>
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>com.workouttracker.log</key>
-    <string>$PROFILE_UUID</string>
-  </dict>
-</dict>
-</plist>
-EOF
+          # python3 plistlib でExportOptions.plistのUUIDを動的に更新
+          python3 -c "
+          import plistlib, os
+          plist_path = 'ios/ExportOptions.plist'
+          with open(plist_path, 'rb') as f:
+              d = plistlib.load(f)
+          profile_uuid = os.environ.get('PROFILE_UUID', '')
+          if profile_uuid:
+              d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
+          dest = '/tmp/ExportOptions.plist'
+          with open(dest, 'wb') as f:
+              plistlib.dump(d, f)
+          "
+
           mkdir -p build/ios/ipa
           xcodebuild \
             -exportArchive \
