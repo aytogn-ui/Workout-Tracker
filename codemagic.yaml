@@ -33,10 +33,22 @@ workflows:
             exit 1
           fi
 
-          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
-            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
-          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
-            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
+          # security cms -D でバイナリplistをデコード → 一時ファイルに保存 → python3で解析
+          # (Python 3.12ではplistlib.load()にseek不可ストリームを渡せないため一時ファイル経由)
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
+
+          PROFILE_UUID=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          print(d['UUID'])
+          ")
+          PROFILE_NAME=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          print(d['Name'])
+          ")
 
           if [ -z "$PROFILE_UUID" ]; then
             echo "ERROR: Could not extract UUID from profile!"
@@ -175,10 +187,19 @@ workflows:
       - name: Install certificates to keychain
         script: |
           PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
-          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
-            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
-          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
-            python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile_decoded.plist 2>/dev/null
+          PROFILE_UUID=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          print(d['UUID'])
+          ")
+          PROFILE_NAME=$(python3 -c "
+          import plistlib
+          with open('/tmp/profile_decoded.plist', 'rb') as f:
+              d = plistlib.load(f)
+          print(d['Name'])
+          ")
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
 
