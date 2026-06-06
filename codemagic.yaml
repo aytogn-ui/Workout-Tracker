@@ -21,29 +21,31 @@ workflows:
 
       - name: Install certificates to keychain
         script: |
-          # Codemagicが設定した証明書・プロファイルを確認
           echo "=== Certificates in keychain ==="
           security find-identity -v -p codesigning
 
           echo "=== Provisioning profiles ==="
           PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
-          echo "Profile: $PROFILE_PATH"
+          echo "Profile path: $PROFILE_PATH"
 
           if [ -z "$PROFILE_PATH" ]; then
             echo "ERROR: No provisioning profile found!"
             exit 1
           fi
 
-          # プロファイルのUUIDと名前を取得
           PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
             python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['UUID'])")
           PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" 2>/dev/null | \
             python3 -c "import sys, plistlib; d=plistlib.load(sys.stdin.buffer); print(d['Name'])")
 
+          if [ -z "$PROFILE_UUID" ]; then
+            echo "ERROR: Could not extract UUID from profile!"
+            exit 1
+          fi
+
           echo "UUID: $PROFILE_UUID"
           echo "Name: $PROFILE_NAME"
 
-          # 環境変数として保存
           echo "PROFILE_UUID=$PROFILE_UUID" >> $CM_ENV
           echo "PROFILE_NAME=$PROFILE_NAME" >> $CM_ENV
 
@@ -54,10 +56,13 @@ workflows:
 
       - name: Archive with xcodebuild
         script: |
-          echo "Using profile UUID: $PROFILE_UUID"
+          set -o pipefail
+          echo "=== Profile UUID: $PROFILE_UUID ==="
+          echo "=== Profile Name: $PROFILE_NAME ==="
 
           mkdir -p build/ios/archive
 
+          # xcpretty がなくても動作するよう tee でログを保存しつつ直接出力
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -69,14 +74,30 @@ workflows:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            archive | xcpretty
+            archive 2>&1 | tee /tmp/xcodebuild_archive.log
 
           echo "=== Archive result ==="
-          ls -la "$PWD/build/ios/archive/" || echo "Archive not found"
+          if [ -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
+            echo "SUCCESS: Archive created at $PWD/build/ios/archive/Runner.xcarchive"
+            ls -la "$PWD/build/ios/archive/"
+          else
+            echo "FAILED: Archive not found!"
+            echo "=== Last 50 lines of build log ==="
+            tail -50 /tmp/xcodebuild_archive.log
+            exit 1
+          fi
 
       - name: Export IPA
         script: |
-          echo "Exporting with UUID: $PROFILE_UUID"
+          set -o pipefail
+          echo "=== Exporting IPA with UUID: $PROFILE_UUID ==="
+
+          # 念のためアーカイブの存在を確認
+          if [ ! -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
+            echo "ERROR: Archive not found before export!"
+            ls -la "$PWD/build/ios/archive/" 2>/dev/null || echo "Archive directory does not exist"
+            exit 1
+          fi
 
           # python3 plistlib でExportOptions.plistのUUIDを動的に更新
           python3 -c "
@@ -85,15 +106,17 @@ workflows:
           with open(plist_path, 'rb') as f:
               d = plistlib.load(f)
           profile_uuid = os.environ.get('PROFILE_UUID', '')
+          print('PROFILE_UUID from env:', profile_uuid)
           if profile_uuid:
               d['provisioningProfiles']['com.workouttracker.log'] = profile_uuid
           dest = '/tmp/ExportOptions.plist'
           with open(dest, 'wb') as f:
               plistlib.dump(d, f)
-          print('ExportOptions.plist written to:', dest)
+          print('Written to:', dest)
           print('provisioningProfiles:', d.get('provisioningProfiles'))
           "
 
+          echo "=== ExportOptions.plist content ==="
           cat /tmp/ExportOptions.plist
 
           mkdir -p build/ios/ipa
@@ -103,14 +126,23 @@ workflows:
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
             -exportOptionsPlist /tmp/ExportOptions.plist \
             -exportPath "$PWD/build/ios/ipa" \
-            | xcpretty
+            2>&1 | tee /tmp/xcodebuild_export.log
 
           echo "=== IPA result ==="
-          find "$PWD/build/ios/ipa" -name "*.ipa" || echo "No IPA found"
+          if find "$PWD/build/ios/ipa" -name "*.ipa" | grep -q ".ipa"; then
+            echo "SUCCESS: IPA created!"
+            find "$PWD/build/ios/ipa" -name "*.ipa"
+          else
+            echo "FAILED: No IPA found"
+            echo "=== Last 50 lines of export log ==="
+            tail -50 /tmp/xcodebuild_export.log
+            exit 1
+          fi
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
+      - /tmp/xcodebuild_archive.log
+      - /tmp/xcodebuild_export.log
 
     publishing:
       app_store_connect:
@@ -156,6 +188,7 @@ workflows:
 
       - name: Archive with xcodebuild
         script: |
+          set -o pipefail
           mkdir -p build/ios/archive
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
@@ -168,11 +201,16 @@ workflows:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            archive | xcpretty
+            archive 2>&1 | tee /tmp/xcodebuild_archive.log
+
+          if [ ! -d "$PWD/build/ios/archive/Runner.xcarchive" ]; then
+            echo "FAILED: Archive not created"
+            exit 1
+          fi
 
       - name: Export IPA
         script: |
-          # python3 plistlib でExportOptions.plistのUUIDを動的に更新
+          set -o pipefail
           python3 -c "
           import plistlib, os
           plist_path = 'ios/ExportOptions.plist'
@@ -192,10 +230,12 @@ workflows:
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
             -exportOptionsPlist /tmp/ExportOptions.plist \
             -exportPath "$PWD/build/ios/ipa" \
-            | xcpretty
+            2>&1 | tee /tmp/xcodebuild_export.log
 
     artifacts:
       - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_archive.log
+      - /tmp/xcodebuild_export.log
 
     publishing:
       app_store_connect:
